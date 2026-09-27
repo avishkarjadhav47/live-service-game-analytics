@@ -1,0 +1,106 @@
+# Assumptions and limitations
+
+This file lists the definitions, data handling, judgement calls and limits behind
+the analysis. Every number here comes from the executed SQL files and notebooks.
+
+---
+
+## 1. Definitions
+
+| Term | Definition |
+|---|---|
+| Revenue | In-app purchase revenue (`purchase.usd_amount`) only. Ad revenue is not in the extract. `reward_amount` is in-game currency given away, a cost to the game economy, never revenue. |
+| Gross revenue | Positive rows of `purchase_clean` (duplicates removed, refunds excluded), dated by purchase date. Total **$217,593.22**. Used for ARPDAU and all per-player work. |
+| Net revenue | Gross + refunds = **$214,343.48**. Reported in totals only, because refunds land days after the purchase they reverse. |
+| Active player-day / DAU | One row in `player_day`. |
+| ARPDAU | Gross revenue ÷ active player-days. For a period: total ÷ total, never an average of daily ratios. |
+| Daily payer share | Buyers who were also active that day ÷ DAU. |
+| Retention Dn | Share of an install cohort active on exactly install date + n. Cohorts: installs 1 Jan – 30 Apr 2026. |
+| Country tier | `country_tier` from the profile (1 = highest revenue potential). |
+| First 30 / last 30 days | 1–30 Jan vs 1–30 Apr (Part 2a). Both contain 4 sale days. |
+| Value per install | Gross IAP in the first 30 or 60 days after install, per install (Jan–Mar installs for 30 days, Jan–Feb for 60 days). |
+| 14-day lapse | A player active at least once in the 7 days up to a weekly snapshot, with no activity in the 14 days after it. |
+
+---
+
+## 2. Who is in which analysis
+
+Different questions need different populations. This is the main source of
+"wrong but plausible" numbers in this extract, so it is shown explicitly.
+
+```mermaid
+flowchart TD
+    ALL[All 80,295 players in the extract]
+    ALL --> PRE[16,000 installed May–Dec 2025<br/>99.4% active in 2026 → survivors]
+    ALL --> NEW[64,295 installed 1 Jan – 30 Apr 2026]
+
+    PRE --> BASE[Active base<br/>DAU · ARPDAU · payer share · Part 2a · lapse model]
+    NEW --> BASE
+
+    NEW --> COH[Install cohorts]
+    COH --> R[Retention grid<br/>cell shown only if every player has reached day n]
+    COH --> Q[Jan–Mar installs<br/>full 30 days observed]
+    Q --> CH[Part 3 channels · time to first purchase · 30-day value]
+    Q --> Q60[Jan–Feb installs<br/>60-day value]
+
+    ALL --> X[36 anomalous currency accounts]
+    X -. excluded .-> LM[lapse model]
+```
+
+Pre-window players stay in the active base because they are genuinely active
+players. They are kept out of anything anchored on install date, because only
+the ones who were still playing in 2026 appear in the extract.
+
+---
+
+## 3. Data quality: what was found and how it was handled
+
+| Issue | Evidence | Handling |
+|---|---|---|
+| `ad_view` timestamps are 8 hours ahead | Ad events span 14:00–07:59 with none 08:00–13:59, while purchases and spends span 06:00–23:59. Raw: 51% of ad player-days have no activity row that day; shifted −8h: 0%. Raw: 8,212 player-days change cap mid-day; shifted: 0. | All ad analysis uses `ad_view_local`. The 7,732 events dated 1 May on the raw clock are 30 April events and are kept. |
+| Ad data missing 5–6 March | No ad rows on either day; activity, purchases and currency spends are normal. | Treated as a logging gap: excluded from ad trends, not counted as zero. |
+| Duplicate purchases | 122 `purchase_id`s appear twice with the same device, pack and amount, hours apart on the same day. | First occurrence kept in `purchase_clean` (−$1,815.82). |
+| Refunds | 226 negative rows after de-duplication (−$3,249.74); 222 match an earlier purchase of the same pack by the same player. | Excluded from gross revenue, included in net. |
+| Pre-window players are survivors | 16,000 players installed May–Dec 2025; 99.4% are active in 2026. | Excluded from install-based analysis (section 2). |
+| Purchases on days with no activity row | 2,449 of 15,078 gross purchases (16.2%, $35,732.51). The share is flat across hours and tiers, so it is not a timezone effect. | Revenue kept. Daily payer share counts only buyers active that day. |
+| Purchases before `install_date` | 111 purchases by 110 players, a few days before install. | Players kept; time to first purchase clipped to day 0. |
+| `original_device_id` links | 3,211 links: 94% cross countries, 42% cross platforms, one device links to itself. | Not used; each `device_id` is one player. |
+| Anomalous currency spends | 36 accounts spend up to 75.8M in one event, against balances that never exceed ~17k. | Excluded from the lapse model. No effect on IAP revenue. |
+| Refund rows keep `sale_flag` | Refunds of sale purchases carry `sale_flag = 1` on non-sale days. | Sale days identified from positive purchases only. |
+| First activity after install | Only ~65% of new installs are active on their install date; the rest first appear 1–14 days later. | Retention stays anchored on `install_date` (the brief's definition); D1 is read with this in mind. |
+| Empty CSV fields | A plain MySQL `LOAD DATA` turns empty fields into `0` / `0000-00-00`. | `setup.sql` loads them as `NULL`. |
+
+---
+
+## 4. Judgement calls
+
+- **Part 2(a) over 2(b).** 2(a) links directly to the year's goal (more revenue without more marketing spend) and to the brief's warning about install mix. 2(b) is screened in appendix A9 and at the end of `02_deep_dive`.
+- **Tier, not country,** is the unit for ARPDAU, as the brief advises.
+- **ARPDAU uncertainty is estimated over players, not days.** A Poisson bootstrap over players is used (1,000 draws). Daily ARPDAU follows the 15-day sale cycle, so days are not independent observations.
+- **Channels are compared at the same tier mix.** Each channel is standardised to the pooled tier distribution. Adding install month as a second stratum gives almost the same result.
+- **The 14-day lapse window comes from the data.** 89% of gaps between play days are 14 days or shorter, so 14 silent days is a real break. But 79% of players return even after 28 silent days, so a longer window gives no cleaner "gone" state. It would only delay the signal.
+- **Weekly snapshots, time split, embargo.** Snapshots are weekly because daily ones give heavy players many near-duplicate rows. The split is by time: train to 5 Mar, validate 12–19 Mar, skip 26 Mar, test 2–16 Apr. Skipping 26 Mar means no training label overlaps the test period.
+- **The interpretable model was chosen.** The alternative scores +0.01 AUC but includes level and tenure, which correlate at 0.88 and make its coefficients flip sign.
+- **4(b) was not attempted.** Only installs up to ~30 January have 90 days of data, and they predate the paid ramp.
+
+---
+
+## 5. What the data supports and what it does not
+
+| Supported | Not supported without more data |
+|---|---|
+| The ARPDAU drop is explained by tier mix; within-tier change is indistinguishable from zero | Why the mix changed beyond the observed paid_video ramp |
+| Observed 30- and 60-day IAP value per install by tier | Whether any tier is profitable to acquire (needs CPI) |
+| No detectable channel difference in value at matched tier mix | Channel differences below ~$0.36–0.45 per install (~20%): too small for this sample to detect reliably |
+| Lapse risk can be ranked on unseen weeks | How many lapses an offer prevents (needs a randomised holdout) |
+| Players rarely reach the ad cap | The effect of changing the cap (cap assignment method unknown) |
+| Revenue dips around each sale | Whether sales add or only move revenue (cadence never varied; needs an experiment) |
+
+### Specific limits
+
+- **Values are gross of app-store fees.** IAP value per install is what players paid, before the store's commission (typically 15–30%). Compare CPI with the net figure, e.g. $1.63 gross ≈ $1.14–1.39 net for Tier 4 at 60 days.
+- **Ad revenue is missing.** Tier 4 players complete ~1.8× as many rewarded ads per active day as Tier 1, so IAP-only value understates them most.
+- **No value beyond day 60.** The extract is too short to estimate lifetime value, and nothing is extrapolated.
+- **The 60-day value comes from Jan–Feb installs.** These are mostly pre-ramp. Using it for today's paid_video Tier 4 installs relies on Part 3's finding that channels do not differ at the same tier.
+- **The lapse value ($0.62) is an upper bound.** It is the 30-day IAP gap between players who stayed and those who lapsed in the highest-risk fifth. Stayers are more engaged to begin with, so it is not a causal effect.
+- **Cap assignment is unknown.** The cap-5 vs cap-8 comparison assumes caps are not tied to the type of player or day.
