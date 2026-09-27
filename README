@@ -1,217 +1,174 @@
-# Live-Service Game Analytics
+# EA Analyst Intern Take-Home: Player Telemetry Review
 
-> **Player behavior, monetization, acquisition quality, rewarded-ad engagement, and churn-risk analysis for a live-service mobile game.**
+Analysis of four months of telemetry from a live-service mobile game, covering game health, the ARPDAU decline, acquisition channels, lapse risk, rewarded ads and sales.
 
-Built as an analyst take-home / portfolio project using four months of supplied game telemetry.
-
-**Study window:** 1 Jan – 30 Apr 2026  
-**Scale:** ~80K players · ~667K active player-days · 120 days · 5 source tables
-
-<p align="center">
-  <a href="readout/Analyst_Take_Home_Readout.pptx"><b>Executive Readout</b></a> ·
-  <a href="ASSUMPTIONS_AND_LIMITATIONS.md"><b>Assumptions & Limitations</b></a>
-</p>
+| | |
+|---|---|
+| **Study window** | 1 Jan – 30 Apr 2026 (120 days) |
+| **Scale** | 80,295 players · 667,435 active player-days · 5 source tables |
+| **Stack** | MySQL 8 / MariaDB · Python (pandas, statsmodels, scikit-learn) · Jupyter |
+| **Start here** | [`readout/Analyst_Take_Home_Readout.pptx`](readout/Analyst_Take_Home_Readout.pptx), an 8-slide readout for the Product Director |
+| **Method detail** | [`ASSUMPTIONS_AND_LIMITATIONS.md`](ASSUMPTIONS_AND_LIMITATIONS.md) |
 
 ---
 
-## Project at a glance
+## Contents
 
-| Area | What was analyzed | Key result |
-|---|---|---|
-| **Game health** | DAU, retention, payer share | DAU increased **1.8K → 11.1K**; mature D30 retention was **~13.9%** |
-| **Monetization** | ARPDAU + mix decomposition | ARPDAU fell **16.5%**, mainly associated with a **Tier-4 mix shift** |
-| **Acquisition** | Channel quality with tier standardization | Raw Organic vs Paid Video revenue gap fell from **$0.92 → $0.11/install** |
-| **Churn** | 14-day lapse-risk model | Logistic model reached **ROC-AUC 0.74 / PR-AUC 0.39** |
-| **Rewarded ads** | Cap usage + engagement | Only **1.27%** of cap-5 days and **0.02%** of cap-8 days hit the cap |
-| **Decision support** | Experiments + missing inputs | Separate **observed patterns** from **causal claims** and identify what should be tested next |
-
----
-
-## Executive summary
-
-### 1. Player activity expanded without a broad retention deterioration
-
-- DAU rose from **1.8K on 1 Jan** to **11.1K on 30 Apr**.
-- Mature-cohort retention was approximately:
-  - **D1: 47.6%**
-  - **D7: 25.4%**
-  - **D14: 19.5%**
-  - **D30: 13.9%**
-- Player-weighted across eligible 2026 install cohorts.
-- Retention was evaluated by install cohort so that newer players were not treated as if they had already reached later milestones.
-
-### 2. The ARPDAU decline is primarily a mix-shift signal
-
-| Metric | First 30 days | Last 30 days |
-|---|---:|---:|
-| ARPDAU | **$0.354** | **$0.296** |
-| Tier-4 active-player-day share | **17.7%** | **46.0%** |
-| Gross IAP revenue / day | **$973** | **$2,788** |
-
-**Observed ARPDAU change:** −16.5%  
-**Mix effect:** −$0.081  
-**Within-tier effect:** +$0.023
-
-The aggregate decline is therefore not well described as a uniform monetization deterioration across country tiers.
-
-### 3. Acquisition comparisons change materially after controlling for player mix
-
-Paid Video has a very different country-tier mix from Organic and Paid Social.
-
-| Channel | Raw 30-day revenue / player | Tier-standardized |
-|---|---:|---:|
-| Organic | $2.49 | $2.17 |
-| Paid Social | $2.24 | $1.98 |
-| Paid Video | $1.57 | $2.07 |
-
-The raw **Organic − Paid Video** gap is about **$0.92/install**; after country-tier standardization it is about **$0.11**, with a **95% CI of −$0.21 to +$0.41**.
-
-**Interpretation:** channel averages alone are not sufficient for allocation decisions. CPI / acquisition-cost data and stronger causal attribution are still required.
-
-### 4. Churn risk can be ranked, but risk is not treatment response
-
-A time-based logistic-regression model predicts a **14-day inactivity lapse** on later unseen data.
-
-| Metric | Test result |
-|---|---:|
-| ROC-AUC | **0.74** |
-| PR-AUC | **0.39** |
-| Top 10% lift | **~2.5×** |
-
-About **85% of lapsers return within 30 days on their own**, so lapse risk should be tested with a holdout rather than treated as permanent churn. A randomized offer experiment is required before using the model to allocate incentives at scale.
+1. [Headline](#1-headline)
+2. [Key findings](#2-key-findings)
+3. [Project structure](#3-project-structure)
+4. [How the pieces connect](#4-how-the-pieces-connect)
+5. [Analysis map](#5-analysis-map)
+6. [Methods](#6-methods)
+7. [Data issues that change the numbers](#7-data-issues-that-change-the-numbers)
+8. [How to run](#8-how-to-run)
+9. [Scope](#9-scope)
 
 ---
 
-## Visual summary
+## 1. Headline
 
-### DAU scale-up
+> **ARPDAU fell 16.5%, but revenue per day rose 2.9×.** The drop comes from player mix, not weaker monetisation. A paid_video ramp brought in mostly Tier 4 players, who spend less per day. Within each country tier, ARPDAU held flat.
+>
+> **So what:** stop managing to blended ARPDAU. Judge acquisition on **value per install by country tier against CPI**.
+
+```mermaid
+flowchart LR
+    A["Paid_video installs<br/>~300 → ~4,600 / week"] --> B["Tier 4 share of<br/>active player-days<br/>18% → 46%"]
+    B --> C["Blended ARPDAU<br/>$0.354 → $0.296<br/>(−16.5%)"]
+    B --> D["Revenue per day<br/>$973 → $2,788<br/>(2.9×)"]
+    C --> E["Decision: bid on value per<br/>install by tier vs CPI"]
+    D --> E
+```
+
+---
+
+## 2. Key findings
+
+| # | Question | Answer | Confidence |
+|---|---|---|---|
+| 1 | Is the game healthy? | DAU grew 6× (1,789 → 11,097). Retention is stable across cohorts: D1 47.6%, D7 25.4%, D14 19.5%, D30 13.9%. | High |
+| 2 | Why did ARPDAU fall? | Mix. The tier mix contributes −$0.081; the within-tier change is +$0.023 (95% CI −$0.006 to +$0.053). | High |
+| 3 | What is a new player worth? | 60-day gross IAP per install: Tier 1 $5.54 → Tier 4 $1.63. Tier 4 is ~$1.14–1.39 after store fees. | Medium |
+| 4 | Is any channel better? | No robust difference at matched tier mix. The raw gap of $0.92 per install shrinks to $0.11 (95% CI −$0.21 to +$0.41). | Medium |
+| 5 | Can lapse be predicted? | Yes, on unseen April weeks: ROC-AUC 0.74, PR-AUC 0.39 (19% base rate), top-10% precision 46.9%. But 85% of lapsers return within 30 days. | Medium |
+| 6 | Is the ad cap binding? | No. 1.27% of cap-5 days and 0.02% of cap-8 days hit the cap; usage is 1.65 a day under both caps. | Medium |
+| 7 | Do sales add revenue? (screened) | Not established. About 78% of the sale-day lift is offset by quieter days around it (51–104% across 7 cycles). | Low |
+
+### 2.1 ARPDAU: the mix moved, the tiers did not
+
+| Country tier | Share of player-days, Jan | Share of player-days, Apr | ARPDAU, Jan | ARPDAU, Apr |
+|---|---:|---:|---:|---:|
+| Tier 1 | 34.5% | 20.5% | $0.519 | $0.556 |
+| Tier 2 | 26.1% | 15.6% | $0.374 | $0.403 |
+| Tier 3 | 21.8% | 18.0% | $0.234 | $0.261 |
+| **Tier 4** | **17.7%** | **46.0%** | **$0.154** | **$0.158** |
+| **All players** | 100% | 100% | **$0.354** | **$0.296** |
 
 ```mermaid
 xychart-beta
-    title "DAU: Study Start vs Study End"
-    x-axis ["1 Jan", "30 Apr"]
-    y-axis "DAU" 0 --> 12000
-    bar [1789, 11097]
+    title "Tier 4 share of active player-days (%)"
+    x-axis ["Jan (1–30)", "Apr (1–30)"]
+    y-axis "Share (%)" 0 --> 50
+    bar [17.7, 46.0]
 ```
-
-### ARPDAU decomposition
 
 ```mermaid
 flowchart LR
-    A["First 30d<br/>ARPDAU $0.354"] --> B["Mix effect<br/>−$0.081"]
-    B --> C["Within-tier effect<br/>+$0.023"]
-    C --> D["Last 30d<br/>ARPDAU $0.296"]
-
-    classDef metric fill:#f6f8fa,stroke:#57606a,color:#24292f;
-    class A,B,C,D metric;
+    S["Jan ARPDAU<br/>$0.354"] --> M["Tier mix<br/>−$0.081"] --> W["Within tiers<br/>+$0.023<br/>(not significant)"] --> E["Apr ARPDAU<br/>$0.296"]
 ```
 
-> The decomposition is descriptive. Daily ARPDAU follows the 15-day sale cycle, so days are not independent; uncertainty comes from a player-level Poisson bootstrap (1,000 draws). Within-tier effect 95% CI: −$0.006 to +$0.053.
+Both windows contain 4 sale days, so the promotion calendar does not explain the change.
+
+### 2.2 Value per install by tier (gross IAP)
+
+| Tier | 30-day value (Jan–Mar installs) | 60-day value (Jan–Feb installs) |
+|---|---:|---:|
+| Tier 1 | $3.53 | $5.54 |
+| Tier 2 | $2.29 | $3.69 |
+| Tier 3 | $1.75 | $2.51 |
+| Tier 4 | $1.10 | $1.63 |
+
+```mermaid
+xychart-beta
+    title "60-day gross IAP value per install ($)"
+    x-axis ["Tier 1", "Tier 2", "Tier 3", "Tier 4"]
+    y-axis "USD" 0 --> 6
+    bar [5.54, 3.69, 2.51, 1.63]
+```
+
+These are value benchmarks, not break-even points. CPI is not in the data, and ad revenue is missing. Ad revenue matters because Tier 4 players complete ~1.8× as many rewarded ads per active day as Tier 1.
+
+### 2.3 Channels: the raw gap is mostly tier mix
+
+65% of paid_video installs are Tier 4, against about 18% for organic and paid_social.
+
+| Channel | Raw 30-day value / install | At matched tier mix |
+|---|---:|---:|
+| Organic | $2.49 | $2.17 |
+| Paid social | $2.24 | $1.98 |
+| Paid video | $1.57 | $2.07 |
+
+```mermaid
+xychart-beta
+    title "30-day value per install: raw (first bar) vs matched tier mix (second bar)"
+    x-axis ["Organic", "Paid social", "Paid video"]
+    y-axis "USD" 0 --> 3
+    bar [2.49, 2.24, 1.57]
+    bar [2.17, 1.98, 2.07]
+```
+
+- **D7 retention:** organic leads paid_video by 1.35 points (p = 0.028), but this does not survive Holm correction (p = 0.083).
+- **Detection limit:** the sample can detect revenue gaps of roughly $0.36–0.45 per install (~20%). Smaller differences cannot be ruled out.
+
+### 2.4 Lapse risk: rankable, but most lapsers come back
+
+| Metric (test weeks 2–16 Apr) | Value |
+|---|---:|
+| ROC-AUC | 0.74 |
+| PR-AUC (base rate 19%) | 0.39 |
+| Precision in top 10% | 46.9% |
+| Lift in top 10% | 2.5× |
+| Lapsers who return within 30 days | 84.5% |
+| Value of a prevented lapse (highest-risk fifth) | ≤ $0.62 of IAP over 30 days |
+
+Because risk is not the same as responsiveness to an offer, comeback offers need a randomised holdout before rollout.
 
 ---
 
-## Analytical workflow
-
-```mermaid
-flowchart LR
-    A["5 telemetry tables"] --> B["Data quality & cleaning"]
-    B --> C["Daily health"]
-    B --> D["Retention & payer behavior"]
-    B --> E["Rewarded ads"]
-    B --> F["ARPDAU deep dive"]
-    B --> G["Channel comparison"]
-    B --> H["14-day lapse model"]
-
-    C --> I["Business interpretation"]
-    D --> I
-    E --> I
-    F --> I
-    G --> I
-    H --> I
-
-    I --> J["Decision / experiment"]
-```
-
-### Data flow
-
-```mermaid
-flowchart TB
-    subgraph DATA["data/"]
-        CSV["player_profile<br/>player_day<br/>purchase<br/>currency_spend<br/>ad_view"]
-    end
-
-    subgraph DB["MySQL"]
-        RAW["Raw tables"]
-        PC["purchase_clean"]
-        AV["ad_view_local"]
-    end
-
-    subgraph ANALYSIS["Analysis"]
-        SQL["SQL Part 1 queries"]
-        N1["01_exploration"]
-        N2["02_deep_dive"]
-        N3["03_channels"]
-        N4["04_churn"]
-    end
-
-    subgraph OUTPUT["readout/"]
-        FIG["figures/"]
-        PPT["Analyst readout"]
-    end
-
-    CSV --> RAW
-    RAW --> PC
-    RAW --> AV
-    RAW --> SQL
-    PC --> N1
-    AV --> N1
-    SQL --> N1
-    PC --> N2
-    AV --> N2
-    PC --> N3
-    AV --> N4
-    N1 --> FIG
-    N2 --> FIG
-    N3 --> FIG
-    N4 --> FIG
-    FIG --> PPT
-```
-
----
-
-## Project structure
+## 3. Project structure
 
 ```text
 EA-Analyst-Take-Home/
 │
-├── data/                              # the five supplied CSVs
+├── data/                              the five supplied CSVs (input, not modified)
 │   ├── player_profile.csv
 │   ├── player_day.csv
 │   ├── purchase.csv
 │   ├── currency_spend.csv
 │   └── ad_view.csv
 │
-├── sql/
-│   ├── setup.sql                      # DB setup + cleaned derived tables
-│   ├── 01_data_quality.sql            # validation and anomaly checks
-│   ├── 02_daily_health.sql            # DAU, revenue, ARPDAU, payer share
-│   ├── 03_retention.sql               # D1/D7/D14/D30 cohort retention
-│   ├── 04_spender_behaviour.sql       # concentration, first purchase, repeat gaps
-│   └── 05_ad_engagement.sql           # cap hits, volume, placements
+├── sql/                               MySQL: build the database, then Part 1
+│   ├── setup.sql                      create DB, load CSVs, build purchase_clean + ad_view_local
+│   ├── 01_data_quality.sql            every data-quality check and how it is handled
+│   ├── 02_daily_health.sql            Part 1(a)  DAU, revenue, ARPDAU, payer share
+│   ├── 03_retention.sql               Part 1(b)  install-week retention grid
+│   ├── 04_spender_behaviour.sql       Part 1(c)  concentration, first purchase, repeat gaps
+│   └── 05_ad_engagement.sql           Part 1(d)  cap hits, daily ad volume, placements
 │
-├── notebooks/
-│   ├── db.py                          # MySQL connection + query runner
-│   ├── style.py                       # shared plotting utilities
-│   ├── 01_exploration.ipynb           # Part 1
-│   ├── 02_deep_dive.ipynb             # Part 2(a) + 2(b) sale-cycle screen
-│   ├── 03_channels.ipynb              # Part 3
-│   └── 04_churn.ipynb                 # Part 4
+├── notebooks/                         Python: checks, statistics, models, charts
+│   ├── db.py                          MySQL connection + run_sql_file() runner
+│   ├── style.py                       shared chart style; saves PNGs to readout/figures
+│   ├── 01_exploration.ipynb           Part 1: runs sql/01–05, cross-checks, charts
+│   ├── 02_deep_dive.ipynb             Part 2(a) ARPDAU decomposition + 2(b) sale-cycle screen
+│   ├── 03_channels.ipynb              Part 3 channel comparison
+│   └── 04_churn.ipynb                 Part 4 lapse model and offer economics
 │
 ├── readout/
-│   ├── Analyst_Take_Home_Readout.pptx # 8-slide executive readout
-│   └── figures/                       # generated analysis visuals
+│   ├── Analyst_Take_Home_Readout.pptx 8-slide executive readout
+│   └── figures/                       PNGs written by the notebooks
 │
-├── ASSUMPTIONS_AND_LIMITATIONS.md
+├── ASSUMPTIONS_AND_LIMITATIONS.md     definitions, data handling, judgement calls, limits
 ├── README.md
 ├── requirements.txt
 └── .gitignore
@@ -219,134 +176,148 @@ EA-Analyst-Take-Home/
 
 ---
 
-## Analysis map
-
-| Business question | Main analysis | SQL / Notebook | Readout |
-|---|---|---|---|
-| Is player health improving? | DAU, payer share, retention | `02_daily_health.sql`, `03_retention.sql` · `01_exploration.ipynb` | Slides 2–3 |
-| Why did ARPDAU fall? | Mix vs within-tier decomposition | `02_deep_dive.ipynb` | Slides 3–4 |
-| What is a new install worth, and do channels differ? | 30/60-day value per install by tier; tier-standardized channel comparison | `02_deep_dive.ipynb`, `03_channels.ipynb` | Slide 5 |
-| Can lapse risk be predicted? | Time-based logistic regression | `04_churn.ipynb` | Slides 7–8 |
-| Is the ad cap binding? | Cap-hit rate + daily engagement | `05_ad_engagement.sql` · `01_exploration.ipynb` | Slides 6, 8 |
-| Do sales create incremental revenue? | Sale-cycle screening (~78% of sale-day lift offset) | `02_deep_dive.ipynb` (end) | Slides 6–7 |
-| What should we do, test, and still find out? | Actions, experiments, confidence and data gaps | — | Slides 6–8 |
-
----
-
-## Methods
-
-### Statistics
-
-- Cohort retention analysis
-- Direct standardization by country tier
-- Player-level bootstrap confidence intervals (Poisson, 1,000 draws for ARPDAU; stratified, 5,000 draws for channels)
-- Multiple-comparison control using Holm correction (D7 retention across the 3 channel pairs)
-- Logistic regression for interpretable lapse-risk ranking
-- Time-based train / validation / test split to reduce temporal leakage
-
-### Key definitions
-
-| Metric | Definition |
-|---|---|
-| **ARPDAU** | IAP revenue / active player-days |
-| **D7 retention** | Share of an install cohort active on day 7 |
-| **Lapse / churn** | Active at least once in the 7 days up to a weekly snapshot, then no recorded activity in the following 14 days |
-| **Channel revenue** | 30-day gross IAP revenue per eligible install |
-| **Cap-hit rate** | Share of player-days reaching the configured rewarded-ad daily cap |
-
----
-
-## Data quality & important handling
-
-The project keeps raw telemetry intact and applies analysis-specific cleaning.
-
-| Issue | Handling |
-|---|---|
-| `ad_view` timestamps are consistently **8 hours ahead** | Created `ad_view_local` and used corrected local dates for ad analysis |
-| Ad telemetry is missing on **5–6 March** | Treated as a telemetry gap, not zero engagement |
-| **122 duplicate purchase IDs** | De-duplicated for purchase analysis |
-| Rewarded-ad cap comparison | Observed cap-hit rates are low (**1.27% cap-5, 0.02% cap-8**); cap assignment still needs confirmation before treating the comparison as causal evidence |
-| **226 refund rows after de-duplication (−$3,249.74)** | Excluded from gross IAP revenue; included in net revenue |
-| Players installed before 2026 | Excluded from retention, channel and first-purchase analyses requiring complete observation windows |
-| `original_device_id` links are not credible | Not used for player-level linking |
-
-See [`ASSUMPTIONS_AND_LIMITATIONS.md`](ASSUMPTIONS_AND_LIMITATIONS.md) for the full evidence and judgment calls.
-
----
-
-## What the telemetry cannot answer
-
-The supplied extract does **not** contain:
-
-- Marketing spend / CPI
-- Rewarded-ad revenue
-- Customer-support outcomes
-- Survey / qualitative feedback
-- Experimental treatment assignment for the proposed re-engagement tests
-
-Because of this, several analyses are intentionally framed as **observational evidence rather than causal estimates**.
-
-### Decision principle
+## 4. How the pieces connect
 
 ```mermaid
 flowchart LR
-    A["Observed pattern"] --> B{"Causal question answered?"}
-    B -- "Yes" --> C["Use result"]
-    B -- "No" --> D["Run controlled experiment"]
-    D --> E["Measure incremental impact"]
-    E --> F["Check economics"]
-    F --> G["Scale / stop"]
+    subgraph IN["data/"]
+        CSV["5 supplied CSVs"]
+    end
+
+    subgraph DB["MySQL · sql/setup.sql"]
+        RAW["raw tables"]
+        PC["purchase_clean<br/>duplicates removed"]
+        AL["ad_view_local<br/>timestamps −8h"]
+    end
+
+    subgraph SQL["sql/01–05"]
+        DQ["01 data quality"]
+        P1["02–05 Part 1 metrics"]
+    end
+
+    subgraph NB["notebooks/"]
+        N1["01 exploration · Part 1"]
+        N2["02 deep dive · Part 2"]
+        N3["03 channels · Part 3"]
+        N4["04 churn · Part 4"]
+    end
+
+    subgraph OUT["readout/"]
+        FIG["figures/"]
+        DECK["8-slide readout"]
+    end
+
+    CSV --> RAW
+    RAW --> PC
+    RAW --> AL
+    RAW --> DQ
+    PC --> P1
+    AL --> P1
+    P1 -->|run_sql_file| N1
+    PC --> N2
+    PC --> N3
+    PC --> N4
+    AL --> N2
+    AL --> N4
+    N1 --> FIG
+    N2 --> FIG
+    N3 --> FIG
+    N4 --> FIG
+    FIG --> DECK
+```
+
+The notebooks run the queries in `sql/` directly through `run_sql_file()`. The Part 1 numbers in the notebooks and in the SQL therefore come from the same code.
+
+---
+
+## 5. Analysis map
+
+| Brief part | Question | SQL | Notebook | Readout slide |
+|---|---|---|---|---|
+| Data quality | What is wrong with the extract? | `01_data_quality.sql` | `01_exploration` §0 | 6, 8 |
+| 1(a) | Daily health | `02_daily_health.sql` | `01_exploration` | 3 |
+| 1(b) | Retention | `03_retention.sql` | `01_exploration` | 3 |
+| 1(c) | Spender behaviour | `04_spender_behaviour.sql` | `01_exploration` | — |
+| 1(d) | Rewarded ads | `05_ad_engagement.sql` | `01_exploration` | 6, 8 |
+| 2(a) | Why did ARPDAU fall? | — | `02_deep_dive` | 2, 3, 4 |
+| 2(a) | What is a new install worth? | — | `02_deep_dive` | 5 |
+| 2(b) | Do sales add revenue? (screened) | — | `02_deep_dive` (end) | 6, 7 |
+| 3 | Are channels different? | — | `03_channels` | 5, 7 |
+| 4(a) | Can lapse be predicted? | — | `04_churn` | 7, 8 |
+
+### Readout storyline
+
+```mermaid
+flowchart LR
+    S1["1 · Title"] --> S2["2 · Story in<br/>one picture"] --> S3["3 · What<br/>changed"] --> S4["4 · Why"] --> S5["5 · Does it<br/>matter"] --> S6["6 · What<br/>to do"] --> S7["7 · What<br/>to test"] --> S8["8 · What we<br/>don't know"]
 ```
 
 ---
 
-## Reproducibility
+## 6. Methods
 
-### Requirements
+| Method | Used for | Where |
+|---|---|---|
+| Symmetric (Shapley) mix / within-tier decomposition | Splitting the ARPDAU change | `02_deep_dive` |
+| Player-level Poisson bootstrap (1,000 draws) | Uncertainty on the decomposition. Players are resampled, not days, because daily ARPDAU follows the 15-day sale cycle. | `02_deep_dive` |
+| Direct standardisation to the pooled tier mix | Comparing channels like for like | `03_channels` |
+| Stratified player bootstrap (5,000 draws, channel × tier) | Channel confidence intervals | `03_channels` |
+| Holm correction | D7 retention across the 3 channel pairs | `03_channels` |
+| Minimum detectable effect (2.8 × SE) | What the channel test could and could not detect | `03_channels` |
+| Logistic regression, weekly snapshots, time split with embargo | Ranking 14-day lapse risk | `04_churn` |
+| Sale-cycle screen (7 full 15-day cycles) | Whether sales add or move revenue | `02_deep_dive` |
 
-- MySQL 8+ or MariaDB 10.6+
-- Python 3.11+
-- Packages listed in `requirements.txt`
+### Lapse model timeline
 
-### Setup
-
-```bash
-python -m venv .venv
+```mermaid
+flowchart LR
+    T["Train<br/>snapshots to 5 Mar"] --> V["Validate<br/>12–19 Mar"] --> G["Embargo<br/>26 Mar skipped"] --> X["Test<br/>2–16 Apr"]
 ```
 
-**Windows**
+---
 
-```powershell
-.venv\Scripts\activate
+## 7. Data issues that change the numbers
+
+Full evidence is in `sql/01_data_quality.sql` and [`ASSUMPTIONS_AND_LIMITATIONS.md`](ASSUMPTIONS_AND_LIMITATIONS.md#4-data-quality-decisions).
+
+| Issue | Handling |
+|---|---|
+| `ad_view` timestamps are 8 hours ahead of every other table | All ad analysis uses `ad_view_local` (−8h) |
+| No ad rows on 5–6 March | Treated as a logging gap, not zero engagement |
+| 122 duplicated `purchase_id`s | First occurrence kept in `purchase_clean` (−$1,815.82) |
+| 226 refund rows after de-duplication (−$3,249.74) | Excluded from gross revenue; included in net |
+| 16,000 players installed before 2026 are survivors (99.4% active in 2026) | Excluded from retention, channel and value-per-install analysis |
+| `original_device_id` links are not credible (94% cross countries) | Not used; each `device_id` is one player |
+| 36 accounts with impossible currency spends | Excluded from the lapse model; no effect on IAP |
+
+---
+
+## 8. How to run
+
+```mermaid
+flowchart LR
+    A["1 · CSVs in data/"] --> B["2 · mysql < sql/setup.sql"] --> C["3 · pip install<br/>-r requirements.txt"] --> D["4 · Run notebooks<br/>01 → 04"]
 ```
 
-**macOS / Linux**
+**1. Data.** Put the five supplied CSVs in `data/`.
 
-```bash
-source .venv/bin/activate
-```
-
-```bash
-pip install -r requirements.txt
-```
-
-### Build the database
-
-Place the five supplied CSVs in `data/`, then run from the repository root (the load paths in `setup.sql` are relative to it):
+**2. Database** (MySQL 8 or MariaDB 10.6+). Run from the repository root; the load paths in `setup.sql` are relative to it.
 
 ```bash
 mysql --local-infile=1 -u root -p < sql/setup.sql
 ```
 
-If local-file loading is disabled on the server:
+If the server refuses local files, run `SET GLOBAL local_infile = 1;` once as an admin.
 
-```sql
-SET GLOBAL local_infile = 1;
+**3. Python** (3.11+):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-### Run the analysis
-
-From the repository root:
+**4. Notebooks**, in order. The MySQL password is read from `MYSQL_PASSWORD`, or asked for interactively.
 
 ```bash
 jupyter nbconvert --to notebook --execute --inplace notebooks/01_exploration.ipynb
@@ -355,30 +326,17 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/03_channels.ipynb
 jupyter nbconvert --to notebook --execute --inplace notebooks/04_churn.ipynb
 ```
 
-The notebooks use the shared database utilities in `notebooks/db.py`. Bootstrap procedures use fixed seeds for reproducibility.
+Bootstraps use fixed seeds, so results reproduce exactly.
 
 ---
 
-## Scope
+## 9. Scope
 
-| Component | Status |
+| Part | Status |
 |---|---|
-| Part 1 — Game health | **Completed** |
-| Part 2(a) — ARPDAU deep dive | **Completed** |
-| Part 2(b) — Sales experiment | **Screened only**; requires cadence experiment |
-| Part 3 — Acquisition channels | **Completed** |
-| Part 4(a) — Churn / lapse risk | **Completed** |
-| Part 4(b) — New-install value | **Not attempted**; insufficient comparable 90-day observation for the newer install ramp |
-
----
-
-## Portfolio notes
-
-This project demonstrates an end-to-end analyst workflow:
-
-**SQL → data quality → statistical analysis → business interpretation → decision framework**
-
-The emphasis is not only on producing metrics, but on checking whether a metric answers the business question, accounting for player mix and time dependence, and separating **what the telemetry shows** from **what still needs an experiment**.
-
-> **Start here:** [`readout/Analyst_Take_Home_Readout.pptx`](readout/Analyst_Take_Home_Readout.pptx)
-
+| 1 Game health (a–d) | Done |
+| 2(a) ARPDAU deep dive | Done |
+| 2(b) Sales | Screened only; the conclusion needs a cadence experiment |
+| 3 Acquisition channels | Done |
+| 4(a) Lapse risk | Done |
+| 4(b) Value of a new install at 90 days | Not attempted. Only installs up to ~30 Jan have 90 days observed, and they predate the paid ramp. 30- and 60-day values are given instead. |

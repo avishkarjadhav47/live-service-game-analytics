@@ -1,283 +1,192 @@
-# Assumptions & Limitations
+# Assumptions and Limitations
 
-This document records the **definitions, analysis populations, data-quality decisions, judgement calls, and limitations** behind the live-service game analysis.
-
-> **Principle:** every reported number comes from the executed SQL files and notebooks.  
-> Raw telemetry is preserved; handling decisions are documented rather than hidden.
+This file sets out the definitions, populations, data-quality handling, judgement calls and limits behind the analysis. Every number here comes from the executed SQL files and notebooks, and matches the [README](README.md) and the readout deck.
 
 ---
 
 ## Contents
 
-- [1. Analysis at a glance](#1-analysis-at-a-glance)
-- [2. Core definitions](#2-core-definitions)
-- [3. Analysis populations](#3-analysis-populations)
-- [4. Data-quality decisions](#4-data-quality-decisions)
-- [5. Analytical judgement calls](#5-analytical-judgement-calls)
-- [6. What the data supports](#6-what-the-data-supports)
-- [7. What the data cannot establish](#7-what-the-data-cannot-establish)
-- [8. Important limitations](#8-important-limitations)
+1. [Definitions](#1-definitions)
+2. [Who is in which analysis](#2-who-is-in-which-analysis)
+3. [Time windows](#3-time-windows)
+4. [Data-quality decisions](#4-data-quality-decisions)
+5. [Judgement calls](#5-judgement-calls)
+6. [What the data supports, and what it does not](#6-what-the-data-supports-and-what-it-does-not)
+7. [Specific limitations](#7-specific-limitations)
 
 ---
 
-## 1. Analysis at a glance
+## 1. Definitions
 
-| Item | Definition |
+### Revenue
+
+| Term | Definition |
 |---|---|
-| **Study window** | 1 Jan – 30 Apr 2026 |
-| **Players** | 80,295 |
-| **Active player-days** | ~667K |
-| **Revenue** | In-app purchases only |
-| **Main analytical units** | Player, player-day, purchase/event |
-| **Main outputs** | Game health, retention, monetization, acquisition, churn risk |
+| **Revenue** | In-app purchase revenue (`purchase.usd_amount`) only. Ad revenue is not in the extract. `reward_amount` is in-game currency given away, not revenue. |
+| **Gross revenue** | Positive rows of `purchase_clean` (duplicates removed, refunds excluded), dated by purchase date. Total **$217,593.22**. Used for ARPDAU and all per-player work. |
+| **Net revenue** | Gross + refunds = **$214,343.48**. Reported in totals only, because refunds land days after the purchase they reverse. |
+| **ARPDAU** | Gross revenue ÷ active player-days. For a period: total ÷ total, never an average of daily ratios. |
+| **Value per install** | Gross IAP in the first 30 or 60 days after install, per install in the eligible cohort. |
 
-### Decision framework
+### Players and activity
 
-```mermaid
-flowchart LR
-    A[Raw telemetry] --> B[Data quality]
-    B --> C[Define population]
-    C --> D[Compute metrics]
-    D --> E[Statistical uncertainty]
-    E --> F[Business interpretation]
-    F --> G[Decision / next experiment]
-```
-
-The analysis deliberately separates **observed patterns** from **causal conclusions**.
+| Term | Definition |
+|---|---|
+| **Active player-day / DAU** | One row in `player_day`. |
+| **Daily payer share** | Buyers who were also active that day ÷ DAU. |
+| **Retention Dn** | Share of an install cohort active on exactly install date + *n*. Reported player-weighted, using only cohorts that have fully reached day *n*. |
+| **Country tier** | `country_tier` from the profile (1 = highest revenue potential). |
+| **14-day lapse** | Active at least once in the 7 days up to a weekly snapshot, then no recorded activity in the following 14 days. |
 
 ---
 
-## 2. Core definitions
+## 2. Who is in which analysis
 
-### Revenue & monetization
-
-| Metric | Definition |
-|---|---|
-| **Revenue** | In-app purchase revenue from `purchase.usd_amount`. Ad revenue is not in the extract. `reward_amount` is in-game currency, not revenue. |
-| **Gross revenue** | Positive rows in `purchase_clean` after deduplication and excluding refunds. **$217,593.22**. |
-| **Net revenue** | Gross revenue + refunds = **$214,343.48**. Reported for totals only because refunds can arrive days after the original purchase. |
-| **ARPDAU** | Gross revenue ÷ active player-days. For a period, total revenue ÷ total player-days — never an average of daily ratios. |
-| **Daily payer share** | Players who purchased and were active that day ÷ DAU. |
-| **Value per install** | Gross IAP generated within the first 30 or 60 days after install, divided by installs in the eligible cohort. |
-
-### Retention & churn
-
-| Metric | Definition |
-|---|---|
-| **DAU / active player-day** | One row in `player_day`. |
-| **D<n> retention** | Share of an install cohort active on exactly install date + *n*. |
-| **14-day lapse** | Player active at least once during the 7 days leading to a weekly snapshot, followed by no activity for the next 14 days. |
-| **Country tier** | `country_tier` from player profile; Tier 1 is the highest revenue-potential tier. |
-
-### Time windows
-
-| Window | Definition |
-|---|---|
-| **First 30 days** | 1–30 Jan 2026 |
-| **Last 30 days** | 1–30 Apr 2026 |
-| **30-day value cohort** | Installs from Jan–Mar 2026 |
-| **60-day value cohort** | Installs from Jan–Feb 2026 |
-
-> Both the first and last 30-day ARPDAU windows contain **4 sale days**.
-
----
-
-## 3. Analysis populations
-
-Different questions require different eligible populations. Using the wrong population can produce a number that looks reasonable but answers the wrong question.
+Different questions need different populations. Choosing the wrong one gives numbers that look plausible but answer a different question.
 
 ```mermaid
 flowchart TD
-    A[80,295 players in extract]
+    ALL["All 80,295 players in the extract"]
+    ALL --> PRE["16,000 installed May–Dec 2025<br/>99.4% active in 2026 → survivors"]
+    ALL --> NEW["64,295 installed 1 Jan – 30 Apr 2026"]
 
-    A --> B[16,000 pre-window installs<br/>May-Dec 2025]
-    A --> C[64,295 installs<br/>Jan-Apr 2026]
+    PRE --> BASE["Active base<br/>DAU · ARPDAU · payer share · Part 2(a) · lapse model"]
+    NEW --> BASE
 
-    B --> D[Active-base analyses]
-    C --> D
+    NEW --> COH["Install cohorts"]
+    COH --> R["Retention grid<br/>cell shown only if every player has reached day n"]
+    COH --> Q["Jan–Mar installs<br/>full 30 days observed"]
+    Q --> CH["Part 3 channels · first purchase · 30-day value"]
+    Q --> Q60["Jan–Feb installs<br/>60-day value"]
 
-    C --> E[Install-cohort analyses]
-    E --> F[Retention]
-    E --> G[Jan-Mar installs<br/>30-day value / channels / first purchase]
-    G --> H[Jan-Feb installs<br/>60-day value]
-
-    A --> I[36 anomalous currency accounts]
-    I -. excluded .-> J[Lapse model]
+    ALL --> X["36 anomalous currency accounts"]
+    X -. excluded .-> LM["Lapse model"]
 ```
 
-### Why pre-window players stay in some analyses
+| Population | Size | Used in | Excluded from |
+|---|---:|---|---|
+| All players | 80,295 | DAU, ARPDAU, payer share, Part 2(a) | — |
+| Pre-2026 installs | 16,000 | Active-base metrics, lapse model | Retention, channels, value per install, first purchase |
+| 2026 installs | 64,295 | Retention grid | — |
+| Jan–Mar installs | 37,489 | 30-day value, channel comparison | — |
+| Jan–Feb installs | 19,280 | 60-day value | — |
+| Anomalous currency accounts | 36 | IAP metrics | Lapse model |
 
-The 16,000 players installed before January 2026 are valid members of the active player base. They are therefore retained in **DAU, ARPDAU, payer-share, and lapse analyses**.
+Pre-2026 players stay in the active base because they are genuinely active players. They are kept out of anything anchored on install date, because only the ones still playing in 2026 appear in the extract.
 
-They are excluded from analyses that depend on a known install date because only players still visible in the 2026 extract are observed — effectively a survivor population.
+---
 
-### Cohort completeness
+## 3. Time windows
 
-Retention cells are shown only when the full milestone is observable. Recent cohorts therefore have `NULL` rather than being incorrectly treated as zero retention.
+```mermaid
+flowchart LR
+    J["1–30 Jan<br/>first window<br/>4 sale days"] --> F["Feb–Mar<br/>paid_video ramp<br/>starts early March"] --> A["1–30 Apr<br/>last window<br/>4 sale days"]
+```
+
+| Window | Dates | Used for |
+|---|---|---|
+| First 30 days | 1–30 Jan 2026 | Part 2(a) "before" |
+| Last 30 days | 1–30 Apr 2026 | Part 2(a) "after" |
+| 30-day value cohort | Installs 1 Jan – 31 Mar | Value per install, channels |
+| 60-day value cohort | Installs 1 Jan – 28 Feb | 60-day value |
+| Sale-cycle screen | 7 full cycles, 8 Jan – 22 Apr | Part 2(b) |
+| Lapse model | Weekly snapshots, 29 Jan – 16 Apr | Part 4(a) |
+
+Both ARPDAU windows contain the same number of sale days, so the promotion calendar does not drive the comparison.
 
 ---
 
 ## 4. Data-quality decisions
 
-The following issues were found in the supplied telemetry and explicitly handled.
-
-| Issue | Evidence | Treatment |
+| Issue | Evidence | Handling |
 |---|---|---|
-| **Ad timestamps shifted by 8 hours** | Raw ad dates created large same-day mismatches and cap inconsistencies; shifting by −8h removes those issues. | Ad analysis uses `ad_view_local`. Events appearing on 1 May are retained as 30 Apr local-time events. |
-| **5–6 Mar ad telemetry gap** | No ad rows while player activity, purchases, and currency spends continued normally. | Treated as missing telemetry, not zero engagement. |
-| **Duplicate purchases** | 122 `purchase_id` values appear twice with matching device, pack, and amount. | First occurrence retained in `purchase_clean`. |
-| **Refunds** | 226 negative purchase rows after deduplication, totalling **−$3,249.74**. | Excluded from gross revenue; included in net revenue. |
-| **Purchases with no activity row** | 2,449 of 15,078 gross purchases (16.2%) occur on days without a `player_day` row. | Revenue retained. Daily payer share counts only buyers active that day. |
-| **Purchases before install date** | 111 purchases across 110 players. | Players retained; first-purchase timing is clipped to day 0. |
-| **`original_device_id` links** | 3,211 links; 94% cross-country and 42% cross-platform. | Not used for identity stitching. `device_id` remains the player key. |
-| **Extreme currency spends** | 36 accounts show events up to **75.8M**, while balances remain below ~17K. | Excluded from lapse modelling; no impact on IAP revenue. |
-| **`sale_flag` on refunds** | Refund rows can retain the original sale flag even after the sale day. | Sale days identified using positive purchases only. |
-| **Late first activity** | Only ~65% of new installs are active on install day; some first appear 1–14 days later. | Retention remains anchored to install date, with D1 interpreted accordingly. |
-| **Empty CSV fields** | MySQL `LOAD DATA` can convert empty fields into `0` / `0000-00-00`. | `setup.sql` loads empty fields as `NULL`. |
+| **`ad_view` timestamps 8 hours ahead** | Ad events span 14:00–07:59 with none 08:00–13:59, while other tables span 06:00–23:59. Raw: 51% of ad player-days have no activity row; shifted −8h: 0%. Raw: 8,212 player-days change cap mid-day; shifted: 0. | All ad analysis uses `ad_view_local`. The 7,732 events dated 1 May on the raw clock are 30 April events and are kept. |
+| **Ad data missing 5–6 March** | No ad rows on either day, while activity, purchases and currency spends are normal. | Treated as a logging gap: excluded from ad trends, not counted as zero. |
+| **Duplicate purchases** | 122 `purchase_id`s appear twice with the same device, pack and amount. | First occurrence kept in `purchase_clean` (−$1,815.82). |
+| **Refunds** | 226 negative rows after de-duplication (−$3,249.74); 222 match an earlier purchase of the same pack by the same player. | Excluded from gross revenue; included in net. |
+| **Pre-2026 players are survivors** | 16,000 players installed May–Dec 2025; 99.4% are active in 2026. | Excluded from install-based analysis (section 2). |
+| **Purchases with no activity row** | 2,449 of 15,078 gross purchases (16.2%). The share is flat across hours and tiers, so it is not a timezone effect. | Revenue kept. Daily payer share counts only buyers active that day. |
+| **Purchases before `install_date`** | 111 purchases by 110 players, a few days before install. | Players kept; time to first purchase clipped to day 0. |
+| **`original_device_id` links** | 3,211 links: 94% cross countries, 42% cross platforms. | Not used; each `device_id` is one player. |
+| **Anomalous currency spends** | 36 accounts spend up to 75.8M in one event, against balances that never exceed ~17k. | Excluded from the lapse model. No effect on IAP revenue. |
+| **Refund rows keep `sale_flag`** | Refunds of sale purchases carry `sale_flag = 1` on non-sale days. | Sale days identified from positive purchases only. |
+| **Late first activity** | Only ~65% of new installs are active on their install date. | Retention stays anchored on `install_date`, per the brief; D1 is read with this in mind. |
+| **Empty CSV fields** | A plain `LOAD DATA` turns empty fields into `0` / `0000-00-00`. | `setup.sql` loads them as `NULL`. |
 
-### Data-quality rule
+### Handling rule
 
 ```mermaid
 flowchart LR
-    A[Raw tables] --> B[Flag anomalies]
-    B --> C{Business meaning known?}
-    C -->|Yes| D[Apply documented correction]
-    C -->|No| E[Exclude only from affected analysis]
-    D --> F[Analysis tables]
+    A["Raw tables"] --> B["Flag anomaly"]
+    B --> C{"Cause understood?"}
+    C -->|Yes| D["Correct in a derived table<br/>(purchase_clean, ad_view_local)"]
+    C -->|No| E["Exclude only from the<br/>affected analysis"]
+    D --> F["Analysis"]
     E --> F
 ```
 
-Raw data is not silently overwritten. Cleaning is performed in derived tables or analysis logic.
+Raw tables are never overwritten; all cleaning lives in derived tables or analysis code.
 
 ---
 
-## 5. Analytical judgement calls
+## 5. Judgement calls
 
-### Monetization deep dive
+| Decision | Choice | Why |
+|---|---|---|
+| **Part 2 question** | 2(a) in full; 2(b) screened only | 2(a) links directly to the year's goal and to the brief's warning about install mix. 2(b) is screened at the end of `02_deep_dive.ipynb` and on slide 7. |
+| **Unit for ARPDAU** | Country tier, not country | As the brief advises. |
+| **ARPDAU uncertainty** | Player-level Poisson bootstrap (1,000 draws) | Daily ARPDAU follows the 15-day sale cycle, so days are not independent observations. Players are resampled instead. |
+| **Channel comparison** | Direct standardisation to the pooled tier mix; stratified player bootstrap (5,000 draws) | Adding install month as a second stratum gives almost the same result. |
+| **Multiple comparisons** | Holm correction on D7 across the 3 channel pairs | Organic vs paid_video D7: p = 0.028 raw, 0.083 after Holm. |
+| **Lapse window** | 14 days | 89% of gaps between play days are ≤ 14 days, so 14 silent days is a real break. 79% of players return even after 28 silent days, so a longer window gives no cleaner "gone" state. |
+| **Snapshots** | Weekly, not daily | Daily snapshots give heavy players many near-duplicate rows. |
+| **Model validation** | Time split with a one-week embargo | No training label overlaps the test period. |
+| **Model choice** | Interpretable logistic regression | The alternative scores only +0.01 AUC but includes level and tenure (correlation 0.88), which makes its coefficients flip sign. |
+| **Sale-cycle baseline** | Mean ARPDAU on cycle days 5–10 | The mid-cycle days are furthest from any sale. The offset (~78%) depends on this choice, which is one reason 2(b) is only screened. |
+| **Part 4(b)** | Not attempted | Only installs up to ~30 January have 90 days of data, and they predate the paid ramp. |
 
-**Part 2(a) was selected over 2(b).**
+### Lapse model split
 
-Part 2(a) directly connects to the goal of increasing revenue without increasing marketing spend and to the brief's warning about changing install mix. Part 2(b) is screened only: see slide 7 of the readout and the end of `02_deep_dive.ipynb`, where about 78% of each sale's extra revenue is offset by quieter days around it (51%–104% across 7 cycles).
-
-### Country tier rather than country
-
-Tier is used as the main unit for ARPDAU because the brief explicitly directs the analysis toward country-tier effects.
-
-### ARPDAU uncertainty
-
-Daily revenue follows a strong sale cadence, so daily observations are not treated as independent.
-
-Uncertainty is therefore estimated by resampling **players, not days**: a player-level Poisson bootstrap (1,000 draws) for the ARPDAU decomposition, and a stratified player bootstrap (5,000 draws within channel × tier) for the channel comparison.
-
-### Acquisition channels
-
-Channels are compared at a common country-tier mix using direct standardization.
-
-Adding install month as an additional stratum produces a very similar result.
-
-### 14-day lapse definition
-
-The 14-day window is supported by the observed spacing of activity:
-
-- **89%** of gaps between play days are ≤14 days.
-- **79%** of players return even after 28 silent days.
-
-A longer definition would delay the signal without producing a clearly cleaner "gone" state.
-
-### Churn model design
-
-Weekly snapshots are used to avoid creating many near-duplicate rows for highly active players.
-
-The split is time-based:
-
-```text
-Train      → through 5 Mar
-Validation → 12–19 Mar
-Embargo    → 26 Mar
-Test       → 2–16 Apr
+```mermaid
+flowchart LR
+    T["Train<br/>snapshots to 5 Mar"] --> V["Validate<br/>12–19 Mar"] --> G["Embargo<br/>26 Mar skipped"] --> X["Test<br/>2–16 Apr"]
 ```
 
-The embargo prevents training labels from overlapping the later test period.
-
-### Model choice
-
-The interpretable logistic model was selected. An alternative specification improved AUC by only about **0.01**, but included highly correlated level/tenure variables (correlation ≈ **0.88**) and produced unstable coefficient signs.
-
-### Part 4(b)
-
-90-day analysis was not attempted because only installs up to approximately 30 January have a complete 90-day observation window, and those installs substantially predate the paid ramp.
-
 ---
 
-## 6. What the data supports
+## 6. What the data supports, and what it does not
 
-| Finding supported by the extract | Evidence |
+| Supported by the extract | Needs more data or an experiment |
 |---|---|
-| **ARPDAU movement is largely a mix signal** | Country-tier mix shifted sharply toward Tier 4 while within-tier change was not distinguishable from zero. |
-| **Tier-level 30/60-day IAP value can be estimated** | Complete install cohorts allow observed value-per-install calculations. |
-| **Channel value differences are small after tier matching** | Standardized channel comparisons remove most of the raw revenue gap. |
-| **Lapse risk can be ranked** | Logistic regression generalizes to later, unseen weeks. |
-| **Ad caps are rarely reached** | Cap-hit shares are very low under the observed telemetry. |
-| **Revenue dips around each sale** | Sale-day revenue is elevated, but about 78% of the lift is offset by quieter days before and after (screened only). |
+| The ARPDAU drop is explained by tier mix; within-tier change is indistinguishable from zero | Why the mix changed, beyond the observed paid_video ramp |
+| Observed 30- and 60-day IAP value per install by tier | Whether any tier is profitable to acquire (needs CPI) |
+| No detectable channel difference in value at matched tier mix | Channel differences below ~$0.36–0.45 per install (~20%) |
+| Lapse risk can be ranked on unseen weeks | How many lapses an offer prevents (needs a randomised holdout) |
+| Players rarely reach the ad cap | The effect of changing the cap (cap assignment method unknown) |
+| Revenue dips around each sale; ~78% of the lift is offset | Whether sales add or only move revenue (cadence never varied) |
+
+### From observation to decision
+
+```mermaid
+flowchart LR
+    A["Observed pattern"] --> B{"Causal question<br/>answered?"}
+    B -->|Yes| C["Act on it"]
+    B -->|No| D["Design a test"]
+    D --> E["Measure incremental effect"]
+    E --> F["Compare with cost"]
+    F --> G["Scale or stop"]
+```
 
 ---
 
-## 7. What the data cannot establish
+## 7. Specific limitations
 
-| Question | Missing evidence |
-|---|---|
-| **Why did the player mix change?** | Marketing-spend detail, campaign-level attribution, and acquisition context. |
-| **Which tier is profitable to acquire?** | CPI / CAC and net revenue after platform fees. |
-| **Does one acquisition channel cause better value?** | Randomized acquisition evidence or stronger causal attribution. |
-| **How many lapses can an offer prevent?** | Randomized offer holdout / uplift experiment. |
-| **Would raising the ad cap increase value?** | Known cap assignment plus a controlled cap experiment. |
-| **Do sales create incremental revenue?** | A controlled experiment or cadence variation. |
-| **What is lifetime value beyond 60 days?** | Longer observation window. |
-
----
-
-## 8. Important limitations
-
-### 8.1 Gross vs net value
-
-The reported IAP value is **gross of app-store fees**.
-
-For example, the observed Tier-4 60-day value of approximately **$1.63 gross** corresponds to roughly **$1.14–$1.39 net** under a 30%–15% store-fee range.
-
-### 8.2 Ad revenue is absent
-
-Ad revenue is not present in the extract.
-
-This matters because Tier 4 players generate substantially more rewarded-ad activity than Tier 1 players, so IAP-only value may understate their full monetization value.
-
-### 8.3 No lifetime extrapolation
-
-The extract does not support a defensible LTV estimate beyond the observed 60-day horizon. No long-term value is extrapolated.
-
-### 8.4 60-day value is from an earlier cohort
-
-The 60-day value estimate uses **Jan–Feb 2026 installs**, which are largely pre-ramp.
-
-Applying that benchmark to later Paid Video installs relies on the separate finding that channel differences largely disappear after matching on country tier.
-
-### 8.5 Churn-risk value is an upper bound
-
-The **$0.62** lapse-value figure is the observed 30-day IAP gap between players who stayed and those who lapsed in the highest-risk fifth.
-
-It is **not causal uplift**. Players who stay are more engaged to begin with.
-
-### 8.6 Ad-cap assignment is unknown
-
-The cap-5 vs cap-8 comparison assumes caps are not systematically assigned to different player types or days.
-
-Therefore, the observed cap-headroom result does not establish the impact of changing the cap.
-
----
-
-## Bottom line
-
-> **The telemetry is strong enough to prioritize questions, but not every observed difference is a causal business effect.**
-
-The analysis therefore uses a simple rule:
-
-**Measure → adjust for composition → quantify uncertainty → test causality before scaling.**
+| # | Limitation | Effect on the conclusions |
+|---|---|---|
+| 7.1 | **Values are gross of app-store fees.** | Tier 4's $1.63 at 60 days is ~$1.14–1.39 net at 15–30% fees. Compare CPI with the net figure. |
+| 7.2 | **Ad revenue is missing.** | Tier 4 players complete ~1.8× as many rewarded ads per active day as Tier 1, so IAP-only value understates them most. |
+| 7.3 | **No value beyond day 60.** | The extract is too short for lifetime value; nothing is extrapolated. |
+| 7.4 | **The 60-day value comes from Jan–Feb installs.** | These are mostly pre-ramp. Applying it to today's paid_video Tier 4 installs relies on Part 3's finding that channels do not differ at the same tier. |
+| 7.5 | **The lapse value ($0.62) is an upper bound.** | It is the 30-day IAP gap between players who stayed and those who lapsed in the highest-risk fifth. Stayers are more engaged to begin with, so it is not a causal effect. |
+| 7.6 | **Cap assignment is unknown.** | The cap-5 vs cap-8 comparison assumes caps are not tied to the type of player or day. |
+| 7.7 | **The sale offset is a screen, not an estimate.** | It depends on the assumed "normal" level and ranges 51–104% across the 7 cycles. A 15-day vs 30-day cadence test is needed. |
