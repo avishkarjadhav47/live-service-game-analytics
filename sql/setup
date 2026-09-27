@@ -1,5 +1,5 @@
 
--- setup.sql
+-- setup.sql  (run from the repository root: load paths are relative, e.g. data/player_day.csv)
 
 
 CREATE DATABASE IF NOT EXISTS ea_analyst_takehome;
@@ -27,7 +27,7 @@ CREATE TABLE player_profile (
     first_purchase_date  DATE NULL
 );
 
-LOAD DATA LOCAL INFILE 'C:/Placement/EA-Analyst-Take-Home/data/player_profile.csv'
+LOAD DATA LOCAL INFILE 'data/player_profile.csv'
 INTO TABLE player_profile
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
@@ -51,7 +51,7 @@ CREATE TABLE player_day (
     app_version       VARCHAR(20)
 );
 
-LOAD DATA LOCAL INFILE 'C:/Placement/EA-Analyst-Take-Home/data/player_day.csv'
+LOAD DATA LOCAL INFILE 'data/player_day.csv'
 INTO TABLE player_day
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
@@ -74,7 +74,7 @@ CREATE TABLE purchase (
     sale_flag         TINYINT
 );
 
-LOAD DATA LOCAL INFILE 'C:/Placement/EA-Analyst-Take-Home/data/purchase.csv'
+LOAD DATA LOCAL INFILE 'data/purchase.csv'
 INTO TABLE purchase
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
@@ -99,7 +99,7 @@ CREATE TABLE currency_spend (
     grind_balance    INT
 );
 
-LOAD DATA LOCAL INFILE 'C:/Placement/EA-Analyst-Take-Home/data/currency_spend.csv'
+LOAD DATA LOCAL INFILE 'data/currency_spend.csv'
 INTO TABLE currency_spend
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
@@ -123,7 +123,7 @@ CREATE TABLE ad_view (
     ad_daily_cap    INT
 );
 
-LOAD DATA LOCAL INFILE 'C:/Placement/EA-Analyst-Take-Home/data/ad_view.csv'
+LOAD DATA LOCAL INFILE 'data/ad_view.csv'
 INTO TABLE ad_view
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'

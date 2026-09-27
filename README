@@ -34,16 +34,17 @@ Built as an analyst take-home / portfolio project using four months of supplied 
 - DAU rose from **1.8K on 1 Jan** to **11.1K on 30 Apr**.
 - Mature-cohort retention was approximately:
   - **D1: 47.6%**
-  - **D7: 25.5%**
-  - **D14: 19.6%**
+  - **D7: 25.4%**
+  - **D14: 19.5%**
   - **D30: 13.9%**
+- Player-weighted across eligible 2026 install cohorts.
 - Retention was evaluated by install cohort so that newer players were not treated as if they had already reached later milestones.
 
 ### 2. The ARPDAU decline is primarily a mix-shift signal
 
 | Metric | First 30 days | Last 30 days |
 |---|---:|---:|
-| ARPDAU | **$0.351** | **$0.293** |
+| ARPDAU | **$0.354** | **$0.296** |
 | Tier-4 active-player-day share | **17.7%** | **46.0%** |
 | Gross IAP revenue / day | **$973** | **$2,788** |
 
@@ -59,9 +60,9 @@ Paid Video has a very different country-tier mix from Organic and Paid Social.
 
 | Channel | Raw 30-day revenue / player | Tier-standardized |
 |---|---:|---:|
-| Organic | $2.44 | $2.13 |
-| Paid Social | $2.22 | $1.96 |
-| Paid Video | $1.53 | $2.03 |
+| Organic | $2.49 | $2.17 |
+| Paid Social | $2.24 | $1.98 |
+| Paid Video | $1.57 | $2.07 |
 
 The raw **Organic − Paid Video** gap is about **$0.92/install**; after country-tier standardization it is about **$0.11**, with a **95% CI of −$0.21 to +$0.41**.
 
@@ -97,15 +98,15 @@ xychart-beta
 
 ```mermaid
 flowchart LR
-    A["First 30d<br/>ARPDAU $0.351"] --> B["Mix effect<br/>−$0.081"]
+    A["First 30d<br/>ARPDAU $0.354"] --> B["Mix effect<br/>−$0.081"]
     B --> C["Within-tier effect<br/>+$0.023"]
-    C --> D["Last 30d<br/>ARPDAU $0.293"]
+    C --> D["Last 30d<br/>ARPDAU $0.296"]
 
     classDef metric fill:#f6f8fa,stroke:#57606a,color:#24292f;
     class A,B,C,D metric;
 ```
 
-> The decomposition is descriptive. Daily ARPDAU observations are serially dependent, so block-bootstrap intervals are used for uncertainty.
+> The decomposition is descriptive. Daily ARPDAU follows the 15-day sale cycle, so days are not independent; uncertainty comes from a player-level Poisson bootstrap (1,000 draws). Within-tier effect 95% CI: −$0.006 to +$0.053.
 
 ---
 
@@ -181,9 +182,9 @@ flowchart TB
 ## Project structure
 
 ```text
-live-service-game-analytics/
+EA-Analyst-Take-Home/
 │
-├── data/                              # local input data; gitignored
+├── data/                              # the five supplied CSVs
 │   ├── player_profile.csv
 │   ├── player_day.csv
 │   ├── purchase.csv
@@ -202,12 +203,12 @@ live-service-game-analytics/
 │   ├── db.py                          # MySQL connection + query runner
 │   ├── style.py                       # shared plotting utilities
 │   ├── 01_exploration.ipynb           # Part 1
-│   ├── 02_deep_dive.ipynb             # Part 2
+│   ├── 02_deep_dive.ipynb             # Part 2(a) + 2(b) sale-cycle screen
 │   ├── 03_channels.ipynb              # Part 3
 │   └── 04_churn.ipynb                 # Part 4
 │
 ├── readout/
-│   ├── Analyst_Take_Home_Readout.pptx # executive deck + appendix
+│   ├── Analyst_Take_Home_Readout.pptx # 8-slide executive readout
 │   └── figures/                       # generated analysis visuals
 │
 ├── ASSUMPTIONS_AND_LIMITATIONS.md
@@ -222,12 +223,13 @@ live-service-game-analytics/
 
 | Business question | Main analysis | SQL / Notebook | Readout |
 |---|---|---|---|
-| Is player health improving? | DAU, payer share, retention | `02_daily_health.sql`, `03_retention.sql` · `01_exploration.ipynb` | Slide 2, A4–A6 |
-| Why did ARPDAU fall? | Mix vs within-tier decomposition | `02_deep_dive.ipynb` | Slides 3–4, A8 |
-| How do acquisition channels compare after accounting for player mix? | Tier-standardized D7 + revenue comparison | `03_channels.ipynb` | Slide 5, A10 |
-| Can lapse risk be predicted? | Time-based logistic regression | `04_churn.ipynb` | Slide 6, A11–A13 |
-| Is the ad cap binding? | Cap-hit rate + daily engagement | `05_ad_engagement.sql` · `01_exploration.ipynb` | Slide 7, A7 |
-| Do sales create incremental revenue? | Sale-day / nearby-day screening | `02_deep_dive.ipynb` | Slide 7, A9 |
+| Is player health improving? | DAU, payer share, retention | `02_daily_health.sql`, `03_retention.sql` · `01_exploration.ipynb` | Slides 2–3 |
+| Why did ARPDAU fall? | Mix vs within-tier decomposition | `02_deep_dive.ipynb` | Slides 3–4 |
+| What is a new install worth, and do channels differ? | 30/60-day value per install by tier; tier-standardized channel comparison | `02_deep_dive.ipynb`, `03_channels.ipynb` | Slide 5 |
+| Can lapse risk be predicted? | Time-based logistic regression | `04_churn.ipynb` | Slides 7–8 |
+| Is the ad cap binding? | Cap-hit rate + daily engagement | `05_ad_engagement.sql` · `01_exploration.ipynb` | Slides 6, 8 |
+| Do sales create incremental revenue? | Sale-cycle screening (~78% of sale-day lift offset) | `02_deep_dive.ipynb` (end) | Slides 6–7 |
+| What should we do, test, and still find out? | Actions, experiments, confidence and data gaps | — | Slides 6–8 |
 
 ---
 
@@ -237,9 +239,8 @@ live-service-game-analytics/
 
 - Cohort retention analysis
 - Direct standardization by country tier
-- Player-level bootstrap confidence intervals
-- Moving block bootstrap for serially dependent daily metrics
-- Multiple-comparison control using Holm correction
+- Player-level bootstrap confidence intervals (Poisson, 1,000 draws for ARPDAU; stratified, 5,000 draws for channels)
+- Multiple-comparison control using Holm correction (D7 retention across the 3 channel pairs)
 - Logistic regression for interpretable lapse-risk ranking
 - Time-based train / validation / test split to reduce temporal leakage
 
@@ -249,7 +250,7 @@ live-service-game-analytics/
 |---|---|
 | **ARPDAU** | IAP revenue / active player-days |
 | **D7 retention** | Share of an install cohort active on day 7 |
-| **Lapse / churn** | Active on snapshot day `t` with no recorded activity in the following 14 days |
+| **Lapse / churn** | Active at least once in the 7 days up to a weekly snapshot, then no recorded activity in the following 14 days |
 | **Channel revenue** | 30-day gross IAP revenue per eligible install |
 | **Cap-hit rate** | Share of player-days reaching the configured rewarded-ad daily cap |
 
@@ -265,8 +266,7 @@ The project keeps raw telemetry intact and applies analysis-specific cleaning.
 | Ad telemetry is missing on **5–6 March** | Treated as a telemetry gap, not zero engagement |
 | **122 duplicate purchase IDs** | De-duplicated for purchase analysis |
 | Rewarded-ad cap comparison | Observed cap-hit rates are low (**1.27% cap-5, 0.02% cap-8**); cap assignment still needs confirmation before treating the comparison as causal evidence |
-| **228 raw negative purchase transactions; 226 remain after de-duplication** | Separated from gross IAP; included in net revenue |
-| `first_purchase_date = 0000-00-00` | Treated as missing for timing analysis |
+| **226 refund rows after de-duplication (−$3,249.74)** | Excluded from gross IAP revenue; included in net revenue |
 | Players installed before 2026 | Excluded from retention, channel and first-purchase analyses requiring complete observation windows |
 | `original_device_id` links are not credible | Not used for player-level linking |
 
@@ -332,7 +332,7 @@ pip install -r requirements.txt
 
 ### Build the database
 
-Place the five supplied CSVs in `data/`, then run:
+Place the five supplied CSVs in `data/`, then run from the repository root (the load paths in `setup.sql` are relative to it):
 
 ```bash
 mysql --local-infile=1 -u root -p < sql/setup.sql

@@ -157,7 +157,7 @@ Raw data is not silently overwritten. Cleaning is performed in derived tables or
 
 **Part 2(a) was selected over 2(b).**
 
-Part 2(a) directly connects to the goal of increasing revenue without increasing marketing spend and to the brief's warning about changing install mix. Part 2(b) is screened separately in the appendix.
+Part 2(a) directly connects to the goal of increasing revenue without increasing marketing spend and to the brief's warning about changing install mix. Part 2(b) is screened only: see slide 7 of the readout and the end of `02_deep_dive.ipynb`, where about 78% of each sale's extra revenue is offset by quieter days around it (51%–104% across 7 cycles).
 
 ### Country tier rather than country
 
@@ -167,7 +167,7 @@ Tier is used as the main unit for ARPDAU because the brief explicitly directs th
 
 Daily revenue follows a strong sale cadence, so daily observations are not treated as independent.
 
-The uncertainty analysis therefore uses **player-level Poisson bootstrap** for player comparisons and **moving block bootstrap** for the time-series ARPDAU deep dive.
+Uncertainty is therefore estimated by resampling **players, not days**: a player-level Poisson bootstrap (1,000 draws) for the ARPDAU decomposition, and a stratified player bootstrap (5,000 draws within channel × tier) for the channel comparison.
 
 ### Acquisition channels
 
@@ -218,7 +218,7 @@ The interpretable logistic model was selected. An alternative specification impr
 | **Channel value differences are small after tier matching** | Standardized channel comparisons remove most of the raw revenue gap. |
 | **Lapse risk can be ranked** | Logistic regression generalizes to later, unseen weeks. |
 | **Ad caps are rarely reached** | Cap-hit shares are very low under the observed telemetry. |
-| **Revenue is concentrated around sale days** | Sale-day revenue is elevated, with nearby days contributing to the observed pattern. |
+| **Revenue dips around each sale** | Sale-day revenue is elevated, but about 78% of the lift is offset by quieter days before and after (screened only). |
 
 ---
 
